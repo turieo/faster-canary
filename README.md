@@ -4,6 +4,8 @@ This repository provides an unofficial implementation of **Hybrid Decoding** for
 - AED (Attention Encoder-Decoder) models, and  
 - CTC (Connectionist Temporal Classification) models.  
 
+The `EncDecMultiTaskModel` class has been modified to support hybrid decoding.
+
 ---
 
 ## 📌 Background
