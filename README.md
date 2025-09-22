@@ -11,7 +11,7 @@ This repository provides an unofficial implementation of **Hybrid Decoding** for
 - [Canary v2](https://huggingface.co/nvidia/canary-1b-v2) public models support **25 languages** with both AED and CTC backends.  
 - This work applies the **[hybrid decoding approach](https://arxiv.org/abs/2508.19671)**, but unlike the original paper, it is based on a design **without a shared encoder**.  
 - Model outputs include Punctuation & Capitalization (PnC). Due to PnC, frequent mismatches occur between the CTC and Transformer decoder outputs, so the patch length is fixed to 1.
-- In the current implementation, **larger batch sizes do not linearly improve inference speed** because forward pass depends on the worst-case sample in the batch. (Recommended: 1, 2, 4)
+- In the current implementation, **larger batch sizes do not guarantee an improvement in inference speed**, as the forward pass is determined by the worst-case sample in the batch. (Recommended: 1, 2, 4)
 - The released logic currently supports **greedy search only**.  
 - The difference in word error rate between Canary v2 and hybrid decoding is **less than 0.01%**.
 ---
