@@ -76,19 +76,22 @@ wget https://dldata-public.s3.us-east-2.amazonaws.com/2086-149220-0033.wav
 
 ```python
 from nemo.collections.asr.models import ASRModel
+import torch
 
 model = ASRModel.from_pretrained(model_name="nvidia/canary-1b-v2")
+model.eval()
 
 def inference(audio, lang, timestamps=False):
 
     # Transcribe
-    output = model.transcribe(
-        audio, 
-        source_lang=lang, 
-        target_lang=lang, 
-        timestamps=timestamps, 
-        batch_size=4
-    )
+    with torch.inference_mode():
+        output = model.transcribe(
+            audio, 
+            source_lang=lang, 
+            target_lang=lang, 
+            timestamps=timestamps, 
+            batch_size=4
+        )
     
     # Print results
     if timestamps:

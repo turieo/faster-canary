@@ -173,41 +173,6 @@ class TransformerDecoderBlock(nn.Module, AttentionAdapterModuleMixin):
         return types
 
 
-def form_attention_mask_for_hybrid_decoding(input_mask, memory_states, diagonal=None):
-    """
-    Build attention mask with optional masking of future tokens we forbid
-    to attend to (e.g. as it is in Transformer decoder).
-
-    Args:
-        input_mask: binary mask of size B x L with 1s corresponding to valid
-            tokens and 0s corresponding to padding tokens
-        diagonal: diagonal where triangular future mask starts
-            None -- do not mask anything
-            0 -- regular translation or language modeling future masking
-            1 -- query stream masking as in XLNet architecture
-    Returns:
-        attention_mask: mask of size B x 1 x L x L with 0s corresponding to
-            tokens we plan to attend to and -10000 otherwise
-    """
-
-    if input_mask is None:
-        return None
-    attn_shape = (input_mask.shape[1], input_mask.shape[1])
-    attn_mask = torch.ones(attn_shape, dtype=torch.bool, device=input_mask.device)
-    # attn_mask = torch.tril(torch.ones((input_mask.shape[1], memory_states.shape[1]), device=input_mask.device)).unsqueeze(0).unsqueeze(0)  # [1,1,Tq,Tk]
-    if diagonal is not None:
-        future_mask = torch.tril(torch.ones(attn_shape, dtype=torch.bool, device=input_mask.device), diagonal)
-        attn_mask = attn_mask & future_mask
-
-    # attn_mask (1, 15, 15) -> (1, 15, 24)
-    if memory_states.shape[1] - input_mask.shape[1] > 0:
-        pad = torch.ones((input_mask.shape[1], memory_states.shape[1] - input_mask.shape[1]), device=input_mask.device)
-        attn_mask = torch.cat([pad, attn_mask], dim=-1)
-
-    attention_mask = (1 - attn_mask.to(torch.float)) * -10000.0
-    return attention_mask.unsqueeze(0).unsqueeze(0)
-
-
 class TransformerDecoder(nn.Module):
     def __init__(
         self,
@@ -277,7 +242,7 @@ class TransformerDecoder(nn.Module):
                 or the last layer only
             return_mems_as_list: bool, when True, mems returned are as a list; otherwise mems are Tensor
         """
-        # decoder_attn_mask = form_attention_mask(decoder_mask, diagonal=self.diagonal)
+        decoder_attn_mask = form_attention_mask(decoder_mask, diagonal=self.diagonal)
         encoder_attn_mask = form_attention_mask(encoder_mask)
         memory_states = self._get_memory_states(decoder_states, decoder_mems_list, 0)
         if return_mems:
@@ -286,8 +251,6 @@ class TransformerDecoder(nn.Module):
             else:
                 cached_mems_list = memory_states.unsqueeze(0)
 
-        decoder_attn_mask = form_attention_mask_for_hybrid_decoding(decoder_mask, memory_states, diagonal=self.diagonal)
-        
         for i, layer in enumerate(self.layers):
             decoder_states = layer(decoder_states, decoder_attn_mask, memory_states, encoder_states, encoder_attn_mask)
             memory_states = self._get_memory_states(decoder_states, decoder_mems_list, i + 1)

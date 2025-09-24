@@ -137,37 +137,6 @@ class HybridDecoder:
         mask = tokens != pad_id
         return mask
 
-    def _prepare_for_search(self, decoder_input_ids=None, encoder_hidden_states=None):
-        """
-        Helper function which defines starting sequence to begin generating
-        with and maximum allowed number of tokens to be generated.
-        """
-
-        decoder_parameter = next(self.decoder.parameters())
-        batch_size = self.batch_size
-
-        # for encoder-decoder generation, maximum length of generated sequence
-        # is min(max_sequence_length, src_len + max_delta_length)
-        if encoder_hidden_states is not None:
-            batch_size, src_len, _ = encoder_hidden_states.size()
-            if self.max_delta_len >= 0:
-                max_seq_length = min(self.max_seq_length, src_len + self.max_delta_len)
-            else:
-                max_seq_length = self.max_seq_length
-        else:
-            max_seq_length = self.max_seq_length
-
-        # if no input is provided, start with the batch of <bos> tokens
-        if decoder_input_ids is not None:
-            tgt = decoder_input_ids
-            batch_size, tgt_len = decoder_input_ids.size()
-        else:
-            tgt = torch.zeros(batch_size, 1).long().fill_(self.bos).to(decoder_parameter.device)
-            tgt_len = 1
-        max_generation_length = max_seq_length - tgt_len
-
-        return tgt, batch_size, max_generation_length
-
     def _one_step_forward(
         self,
         decoder_input_ids=None,
@@ -221,21 +190,21 @@ class HybridDecoder:
         else:
             cur_pos = cached_decoder_mems_list[0].size(1)
 
-        decoder_tokens = decoder_input_ids
-        batch_size, decoder_input_len = decoder_tokens.size()
+        # decoder_tokens = decoder_input_ids
+        batch_size, decoder_input_len = decoder_input_ids.size()
 
         logits, decoder_mems_list = self._one_step_forward(
-            decoder_tokens, encoder_hidden_states, encoder_input_mask, cached_decoder_mems_list, cur_pos
+            decoder_input_ids, encoder_hidden_states, encoder_input_mask, cached_decoder_mems_list, cur_pos
         )
-        logits = logits[:, -decoder_tokens.size(1):, :]
+        logits = logits[:, -decoder_input_ids.size(1):, :]
         topk_scores, topk_indices = torch.topk(logits, self.beam_size, dim=-1)
         topk_indices = topk_indices.view(batch_size, -1)
 
-
-        if cur_pos == 0:  # remove prompt tokens
-            y_sequence = topk_indices[:, self.prompt_token_num - 1 :]
-        else:
-            y_sequence = torch.cat([prev_y_sequence, topk_indices], dim=1)
+        y_sequence = topk_indices[:, self.prompt_token_num - 1 :]
+        # if cur_pos == 0:  # remove prompt tokens
+        #     y_sequence = topk_indices[:, self.prompt_token_num - 1 :]
+        # else:
+        #     y_sequence = torch.cat([prev_y_sequence, topk_indices], dim=1)
 
         return y_sequence, decoder_mems_list
          
@@ -246,13 +215,10 @@ class HybridDecoder:
         forward_counter = 0
         self.prompt_token_num = decoder_input_ids.size(1)
 
-        initial_y_sequence, initial_decoder_mems_list = self._forward(decoder_input_ids, enc_states, enc_mask)
-        forward_counter += 1
-
         tmp_refereunce_sequences = []
         for idx, seq in enumerate(reference_sequences):
             if len(seq) == 0: # no reference sequence from fast decoder
-                tmp_refereunce_sequences.append(initial_y_sequence[idx])
+                tmp_refereunce_sequences.append(torch.tensor([self.eos], device=device))
             else:
                 tmp_refereunce_sequences.append(torch.tensor(seq, device=device))
         reference_sequences = tmp_refereunce_sequences
@@ -262,12 +228,10 @@ class HybridDecoder:
         while True:
             reference_sequences_tensor = pad_sequence(reference_sequences, batch_first=True, padding_value=self.pad)
 
-            tmp_y_sequence = initial_y_sequence.clone()
-            tmp_decoder_mems_list = [mem.clone() for mem in initial_decoder_mems_list]
-
+            tmp_reference_sequences_tensor = torch.cat([decoder_input_ids, reference_sequences_tensor], dim=1)
             # verify process
             tmp_y_sequence, tmp_decoder_mems_list = self._forward(
-                reference_sequences_tensor, enc_states, enc_mask, tmp_y_sequence, tmp_decoder_mems_list
+                tmp_reference_sequences_tensor, enc_states, enc_mask, None, None
             )
 
             first_difference_index, eff_len_reference, eos_check = find_first_difference(
@@ -294,11 +258,11 @@ class HybridDecoder:
             #    2) transformer decoder may have repetition issue
             # so inference at most K times more and stop
             elif seq_check and not eos_check:
-                for i in range(K):
-                    tmp_y_sequence, tmp_decoder_mems_list = self._forward(
-                        tmp_y_sequence[:, -1:], enc_states, enc_mask, tmp_y_sequence, tmp_decoder_mems_list
-                    )
-                    forward_counter += 1
+                tmp_y_sequence = torch.cat([decoder_input_ids, tmp_y_sequence], dim=1)
+                tmp_y_sequence, tmp_decoder_mems_list = self._forward(
+                    tmp_y_sequence, enc_states, enc_mask, None, None
+                )
+                forward_counter += 1
                 for i in range(tmp_y_sequence.size(0)):
                     mask = (tmp_y_sequence[i] < 1123).nonzero(as_tuple=True)[0]
                     if len(mask) > 0:
@@ -324,20 +288,12 @@ class HybridDecoder:
                 confirmed_sequence[i, :length] = reference_sequences_tensor[i, :length]
 
             # patch generation
-            tmp_y_sequence = initial_y_sequence.clone()
-            tmp_decoder_mems_list = [mem.clone() for mem in initial_decoder_mems_list]
-            for i in range(K):
-                if i == 0:
-                    tmp_y_sequence, tmp_decoder_mems_list = self._forward(
-                        confirmed_sequence, enc_states, enc_mask, tmp_y_sequence, tmp_decoder_mems_list
-                    )
-                    forward_counter += 1
-                else:
-                    tmp_y_sequence, tmp_decoder_mems_list = self._forward(
-                        tmp_y_sequence[:, -1:], enc_states, enc_mask, tmp_y_sequence, tmp_decoder_mems_list
-                    )
-                    forward_counter += 1
-                    
+            tmp_confirmed_sequence = torch.cat([decoder_input_ids, confirmed_sequence], dim=1)
+            tmp_y_sequence, tmp_decoder_mems_list = self._forward(
+                tmp_confirmed_sequence, enc_states, enc_mask, None, None
+            )
+            forward_counter += 1
+
             # patch application
             reference_sequences = []
             for i in range(tmp_y_sequence.size(0)):  # batch
