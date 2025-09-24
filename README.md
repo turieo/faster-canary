@@ -16,6 +16,8 @@ The `EncDecMultiTaskModel` class has been modified to support hybrid decoding.
 - In the current implementation, **larger batch sizes do not guarantee an improvement in inference speed**, as the number of forward pass is determined by the worst-case sample in the batch. (Recommended: 1, 2, 4)
 - The released logic currently supports **greedy search only**.  
 - The difference in word error rate between Canary v2 and hybrid decoding is **less than 0.01%**.
+- This code is released for **academic and research use only** under a custom non-commercial license.  
+**Commercial use is strictly prohibited.**  See [LICENSE](./LICENSE) for details.
 ---
 
 ## ⚡ Benchmark Results on NVIDIA V100
