@@ -171,15 +171,15 @@ class HybridDecoder:
                 encoder_hidden_states,
                 encoder_input_mask,
                 decoder_mems_list,
-                return_mems=True,
+                return_mems=False,
             )
         else:
             decoder_mems_list = self.decoder.forward(
-                decoder_hidden_states, decoder_input_mask, decoder_mems_list, return_mems=True
+                decoder_hidden_states, decoder_input_mask, decoder_mems_list, return_mems=False
             )
         with self.classifier.with_log_softmax_enabled(return_scores) as classifier:
             # Use the most recent hidden states to compute logits
-            logits = classifier.forward(hidden_states=decoder_mems_list[-1])
+            logits = classifier.forward(hidden_states=decoder_mems_list)
 
         return logits, decoder_mems_list
 
@@ -211,6 +211,10 @@ class HybridDecoder:
 
     def forward(self, reference_sequences=None, decoder_input_ids=None, enc_states=None, enc_mask=None, K=1):
 
+        self.decoder.eval()
+        self.classifier.eval()
+        self.embedding.eval()
+        
         device = enc_mask.device
         forward_counter = 0
         self.prompt_token_num = decoder_input_ids.size(1)
@@ -224,6 +228,7 @@ class HybridDecoder:
         reference_sequences = tmp_refereunce_sequences
         
         hypotheses = []
+        loop_checker = torch.full((decoder_input_ids.size(0),), -1, device=device)
 
         while True:
             reference_sequences_tensor = pad_sequence(reference_sequences, batch_first=True, padding_value=self.pad)
@@ -274,6 +279,11 @@ class HybridDecoder:
                         y_sequence=final_sequence,
                         text=self.tokenizer.ids_to_text(final_sequence.tolist())))
                 break
+            # unexpected loop
+            elif not torch.any(loop_checker < first_difference_index):
+                break
+
+            loop_checker = first_difference_index.clone()
 
             # correction process
             for i in range(reference_sequences_tensor.size(0)):

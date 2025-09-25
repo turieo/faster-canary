@@ -1054,18 +1054,37 @@ class EncDecMultiTaskModel(ASRModel, ExportableEncDecModel, ASRBPEMixin, ASRModu
             # trick for optimize inference time
             trcfg.batch_size = 1
             hypotheses = []
-            for i in range(len(reference_sequences)):
-                hypotheses.extend(self.hybrid_decoder.forward(
+            for i in range(0, len(reference_sequences), trcfg.batch_size):
+                _hypotheses = self.hybrid_decoder.forward(
                     reference_sequences=reference_sequences[i:i+trcfg.batch_size], 
                     decoder_input_ids=decoder_input_ids[i:i+trcfg.batch_size], 
                     enc_states=enc_states[i:i+trcfg.batch_size], 
-                    enc_mask=enc_mask[i:i+trcfg.batch_size]))
+                    enc_mask=enc_mask[i:i+trcfg.batch_size])
+                
+                if len(_hypotheses) == 0:
+                    print("failover")
+                    _hypotheses = self.decoding.decode_predictions_tensor(
+                        encoder_hidden_states=enc_states[i:i+trcfg.batch_size],
+                        encoder_input_mask=enc_mask[i:i+trcfg.batch_size],
+                        decoder_input_ids=decoder_input_ids[i:i+trcfg.batch_size],
+                        return_hypotheses=trcfg.return_hypotheses,
+                    )
+                hypotheses.extend(_hypotheses)
         else:
             hypotheses = self.hybrid_decoder.forward(
                 reference_sequences=reference_sequences, 
                 decoder_input_ids=decoder_input_ids, 
                 enc_states=enc_states, 
                 enc_mask=enc_mask)
+            
+            if len(hypotheses) == 0:
+                print("failover")
+                hypotheses = self.decoding.decode_predictions_tensor(
+                        encoder_hidden_states=enc_states,
+                        encoder_input_mask=enc_mask,
+                        decoder_input_ids=decoder_input_ids,
+                        return_hypotheses=trcfg.return_hypotheses,
+                    )
 
         merge_to_be_done = trcfg.enable_chunking and len(hypotheses) > 1
 
